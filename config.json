@@ -1,0 +1,13 @@
+{
+	"folder": "/path/to/root/",
+	"port": 8080,
+	"password": "my-password",
+
+	"peers": [
+		{
+			"IP": "peer1-ip",
+			"Port": 8080,
+			"password": "peer1-password"
+		}
+	]
+}
