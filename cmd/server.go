@@ -221,11 +221,18 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 
 	// Lock file
 	lf := lfile.New(f)
+	defer func() {
+		log.Printf("[Local %s] Unlocking %s...", conn.RemoteAddr(), req.RelPath)
+		lf.UnlockAndClose()
+		log.Printf("[Local %s] Unlocked %s", conn.RemoteAddr(), req.RelPath)
+	}()
+
+	log.Printf("[Local %s] Locking %s to receive transfer...", conn.RemoteAddr(), req.RelPath)
 	err = lf.RWLock()
 	if err != nil {
 		return err
 	}
-	defer lf.UnlockAndClose()
+	log.Printf("[Local %s] Locked %s", conn.RemoteAddr(), req.RelPath)
 
 	// Send ping response
 	resp := &FileInfoResp{}

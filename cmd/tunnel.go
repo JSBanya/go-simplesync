@@ -380,13 +380,19 @@ func (t *Tunnel) handleEventUpdate(fullPath string, relPath string, watcher *fsn
 		return nil
 	}
 	lf := lfile.New(f)
-	defer lf.UnlockAndClose()
+	defer func() {
+		log.Printf("[%v:%v] Unlocking %s...", t.IP, t.Port, relPath)
+		lf.UnlockAndClose()
+		log.Printf("[%v:%v] Unlocked %s", t.IP, t.Port, relPath)
+	}()
 
 	// Lock file
+	log.Printf("[%v:%v] Locking %s for transfer...", t.IP, t.Port, relPath)
 	err = lf.RLock()
 	if err != nil {
 		return err
 	}
+	log.Printf("[%v:%v] Locked %s", t.IP, t.Port, relPath)
 
 	// Get the mod time
 	stat, err := lf.Stat()
