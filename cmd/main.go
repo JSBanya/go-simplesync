@@ -23,13 +23,18 @@ type PeerEntry struct {
 }
 
 func main() {
-	if len(os.Args) != 2 {
+	cname := ""
+	if len(os.Args) < 2 {
+		cname = "config.json"
+	} else if len(os.Args) == 2 && (os.Args[1] == "help" || os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Printf("Usage: %s <configuration file>\n", os.Args[0])
-		os.Exit(1)
+		os.Exit(0)
+	} else {
+		cname = os.Args[1]
 	}
 
 	// Load config
-	config, err := loadConfig(os.Args[1])
+	config, err := loadConfig(cname)
 	if err != nil {
 		log.Fatal(err)
 	}

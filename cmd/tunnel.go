@@ -197,6 +197,20 @@ func (t *Tunnel) Watch() error {
 		}
 	}
 
+	// Create artificial watcher events to delete old files
+	for relPath, _ := range __deleteTimes {
+		e := fsnotify.Event{
+			Name: t.Root + relPath,
+			Op:   fsnotify.Remove,
+		}
+
+		log.Printf("[Remote %v:%v] Removing historic file %s", t.IP, t.Port, e.Name)
+
+		if err = t.handleEvent(e, watcher); err != nil {
+			return err
+		}
+	}
+
 	// Create artificial watcher events to sync each file
 	for _, f := range files {
 		e := fsnotify.Event{
