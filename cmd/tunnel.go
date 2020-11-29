@@ -33,7 +33,6 @@ type Tunnel struct {
 const (
 	REQ_TYPE_CREATE_FILE = iota
 	REQ_TYPE_CREATE_DIR
-	REQ_TYPE_UPDATE_PING
 	REQ_TYPE_UPDATE
 	REQ_TYPE_DELETE
 )
@@ -343,37 +342,6 @@ func (t *Tunnel) handleEventUpdate(fullPath string, relPath string, watcher *fsn
 	log.Printf("[Remote %v:%v] Initiated update for %s", t.IP, t.Port, relPath)
 	delete(__deleteTimes, relPath)
 
-	// Send ping request
-	// This is done to avoid race conditions and ensure file is write-locked on peer and read-locked locally before processing
-	req := &FileInfoReq{
-		ReqType: REQ_TYPE_UPDATE_PING,
-		RelPath: relPath,
-	}
-
-	data, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-
-	if err = t.encConn.WriteEncryptedFull(data); err != nil {
-		return err
-	}
-
-	respData, err := t.encConn.ReadEncryptedFull()
-	if err != nil {
-		return err
-	}
-
-	var resp FileInfoResp
-	err = json.Unmarshal(respData, &resp)
-	if err != nil {
-		return err
-	}
-
-	if !resp.PingOK {
-		return errors.New("Update ping failed.")
-	}
-
 	// Open file
 	f, err := os.OpenFile(fullPath, os.O_RDONLY, 0666)
 	if err != nil {
@@ -402,14 +370,14 @@ func (t *Tunnel) handleEventUpdate(fullPath string, relPath string, watcher *fsn
 	modTime := stat.ModTime()
 
 	// Create request metadata
-	req = &FileInfoReq{
+	req := &FileInfoReq{
 		ReqType: REQ_TYPE_UPDATE,
 		RelPath: relPath,
 		ModTime: modTime.UnixNano(),
 	}
 
 	// Send request metadata
-	data, err = json.Marshal(req)
+	data, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
@@ -419,19 +387,19 @@ func (t *Tunnel) handleEventUpdate(fullPath string, relPath string, watcher *fsn
 	}
 
 	// Get response
-	respData, err = t.encConn.ReadEncryptedFull()
+	respData, err := t.encConn.ReadEncryptedFull()
 	if err != nil {
 		return err
 	}
 
-	var resp2 FileInfoResp
-	err = json.Unmarshal(respData, &resp2)
+	var resp FileInfoResp
+	err = json.Unmarshal(respData, &resp)
 	if err != nil {
 		return err
 	}
 
 	// Check response
-	if resp2.SendFile {
+	if resp.SendFile {
 		// Server requesting file
 		log.Printf("[%v:%v] Transferring file %s", t.IP, t.Port, relPath)
 		if err = t.encConn.WriteEncryptedStream(lf, uint64(stat.Size())); err != nil {

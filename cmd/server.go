@@ -144,7 +144,7 @@ func (s *Server) handleRequests(conn *EncryptedConnection) error {
 
 		// Check request type
 		switch req.ReqType {
-		case REQ_TYPE_UPDATE_PING:
+		case REQ_TYPE_UPDATE:
 			{
 				// Do update
 				if err = s.handleUpdate(conn, &req); err != nil {
@@ -203,84 +203,33 @@ func (s *Server) handleCreate(conn *EncryptedConnection, req *FileInfoReq) error
 func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error {
 	relPath := req.RelPath
 	fqpath := s.Root + relPath
+	modTime := time.Unix(0, req.ModTime)
+
+	resp := &FileInfoResp{}
+	resp.SendFile = false
 
 	// Check if file exists
 	fexists := true
-	_, err := os.Stat(fqpath)
+	stat, err := os.Stat(fqpath)
 	if err != nil && os.IsNotExist(err) {
+		// File does not exist locally, always request send
 		fexists = false
+		resp.SendFile = true
 	} else if err != nil {
 		return err
 	}
 
-	// Open file and create if not exists
-	f, err := os.OpenFile(fqpath, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return err
-	}
-
-	// Lock file
-	lf := lfile.New(f)
-	defer func() {
-		log.Printf("[Local %s] Unlocking %s...", conn.RemoteAddr(), req.RelPath)
-		lf.UnlockAndClose()
-		log.Printf("[Local %s] Unlocked %s", conn.RemoteAddr(), req.RelPath)
-	}()
-
-	log.Printf("[Local %s] Locking %s to receive transfer...", conn.RemoteAddr(), req.RelPath)
-	err = lf.RWLock()
-	if err != nil {
-		return err
-	}
-	log.Printf("[Local %s] Locked %s", conn.RemoteAddr(), req.RelPath)
-
-	// Send ping response
-	resp := &FileInfoResp{}
-	resp.PingOK = true
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return err
-	}
-
-	if err = conn.WriteEncryptedFull(data); err != nil {
-		return err
-	}
-
-	// Get follow-up file info
-	data, err = conn.ReadEncryptedFull()
-	if err != nil {
-		return err
-	}
-
-	var req2 FileInfoReq
-	err = json.Unmarshal(data, &req2)
-	if err != nil {
-		return err
-	}
-
-	if req2.RelPath != relPath {
-		return errors.New("Mismatching ping and data requests.")
-	}
-
-	modTime := time.Unix(0, req2.ModTime)
-
 	// Stat file
-	stat, err := lf.Stat()
-	if err != nil {
-		return err
+	if fexists {
+		// File exists locally, compare mod-times
+		if stat.ModTime().Before(modTime) {
+			// Local file is older
+			resp.SendFile = true
+		}
 	}
 
-	// Check mod time
-	resp = &FileInfoResp{}
-	if stat.ModTime().Before(modTime) || !fexists {
-		// Request update if local version is older or file was created as a result of this action
-		resp.SendFile = true
-	} else {
-		// Local version is same or newer, do not update
-		resp.SendFile = false
-	}
-
-	data, err = json.Marshal(resp)
+	// Send response
+	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
 	}
@@ -294,9 +243,11 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 		return nil
 	}
 
-	log.Printf("[Local %s] Getting file transfer for %s", conn.RemoteAddr(), req.RelPath)
+	log.Printf("[Local %s] Getting file transfer for %s", conn.RemoteAddr(), relPath)
 
 	// Create a temporary file to write to so that we don't overwrite old file if transfer fails
+	// Writing to a temporary file also avoids deadlocks caused by immediately write-locking the file
+	// The temporary file will be "revoled" to the real file later whenever a lock can be aquired
 	tempFile, err := ioutil.TempFile("", "")
 	if err != nil {
 		return err
@@ -306,16 +257,52 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 		os.Remove(tempFile.Name())
 	}()
 
-	// File was requested, begin reading file
+	// Begin reading file
 	if err = conn.ReadEncryptedStream(tempFile); err != nil {
 		return err
 	}
 
-	// File transfer successful, swap old file with temp file
 	if _, err := tempFile.Seek(0, 0); err != nil {
 		return err
 	}
 
+	// File transfer successful, swap old file with temp file
+	// This is done as soon as we can get a lock
+
+	// Open file and create if not exists
+	f, err := os.OpenFile(fqpath, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return err
+	}
+
+	// Lock file
+	lf := lfile.New(f)
+	defer func() {
+		log.Printf("[Local %s] Unlocking %s...", conn.RemoteAddr(), relPath)
+		lf.UnlockAndClose()
+		log.Printf("[Local %s] Unlocked %s", conn.RemoteAddr(), relPath)
+	}()
+
+	log.Printf("[Local %s] Locking %s to resolve transfer...", conn.RemoteAddr(), relPath)
+	err = lf.RWLock()
+	if err != nil {
+		return err
+	}
+	log.Printf("[Local %s] Locked %s", conn.RemoteAddr(), relPath)
+
+	// Check mod time to see if file has been updated after transfer but before we could aquire the lock
+	stat, err = lf.Stat()
+	if err != nil {
+		return err
+	}
+
+	if !stat.ModTime().Before(modTime) {
+		// Local file is now newer, exit
+		log.Printf("[Local %s] Refuse to resolve %s, file updated locally.", conn.RemoteAddr(), relPath)
+		return nil // Silent exit
+	}
+
+	// Resolve file
 	if err = lf.Truncate(0); err != nil {
 		return err
 	}
@@ -328,7 +315,7 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 		return err
 	}
 
-	log.Printf("[Local %s] Updated file %s", conn.RemoteAddr(), req.RelPath)
+	log.Printf("[Local %s] Updated file %s", conn.RemoteAddr(), relPath)
 	return nil
 }
 
