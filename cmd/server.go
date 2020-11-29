@@ -151,10 +151,10 @@ func (s *Server) handleRequests(conn *EncryptedConnection) error {
 					return err
 				}
 			}
-		case REQ_TYPE_CREATE_FILE, REQ_TYPE_CREATE_DIR:
+		case REQ_TYPE_CREATE_DIR:
 			{
 				// Do create
-				if err = s.handleCreate(conn, &req); err != nil {
+				if err = s.handleCreateDir(conn, &req); err != nil {
 					return err
 				}
 			}
@@ -171,7 +171,7 @@ func (s *Server) handleRequests(conn *EncryptedConnection) error {
 	}
 }
 
-func (s *Server) handleCreate(conn *EncryptedConnection, req *FileInfoReq) error {
+func (s *Server) handleCreateDir(conn *EncryptedConnection, req *FileInfoReq) error {
 	relPath := req.RelPath
 	fqpath := s.Root + relPath
 	modTime := time.Unix(0, req.ModTime)
@@ -180,23 +180,15 @@ func (s *Server) handleCreate(conn *EncryptedConnection, req *FileInfoReq) error
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	} else if err == nil {
-		// File/Directory already exists
+		// Directory already exists
 		return nil
 	}
 
-	if req.ReqType == REQ_TYPE_CREATE_DIR {
-		if err = os.MkdirAll(fqpath, 0777); err != nil {
-			return err
-		}
-
-		log.Printf("[Local %s] Created new directory %s", conn.RemoteAddr(), req.RelPath)
-		return os.Chtimes(fqpath, modTime, modTime)
+	if err = os.MkdirAll(fqpath, 0777); err != nil {
+		return err
 	}
 
-	// File/Directory doesn't exist, create
-	f, _ := os.Create(fqpath)
-	f.Close()
-	log.Printf("[Local %s] Created new file %s", conn.RemoteAddr(), req.RelPath)
+	log.Printf("[Local %s] Created new directory %s", conn.RemoteAddr(), req.RelPath)
 	return os.Chtimes(fqpath, modTime, modTime)
 }
 

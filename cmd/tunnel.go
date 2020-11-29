@@ -31,8 +31,7 @@ type Tunnel struct {
 
 // FileInfoReq.ReqType
 const (
-	REQ_TYPE_CREATE_FILE = iota
-	REQ_TYPE_CREATE_DIR
+	REQ_TYPE_CREATE_DIR = iota
 	REQ_TYPE_UPDATE
 	REQ_TYPE_DELETE
 )
@@ -274,46 +273,38 @@ func (t *Tunnel) handleEvent(e fsnotify.Event, watcher *fsnotify.Watcher) error 
 		return nil
 	}
 
-	// Handle event
+	// Handle events
+	// Created directory
+	if fi, err := os.Stat(fullPath); err == nil && fi.IsDir() && e.Op&fsnotify.Create == fsnotify.Create {
+		return t.handleEventCreateDir(fullPath, relPath, watcher)
+	}
+
+	// Deleted file (rename behaves as a delete+create)
 	if e.Op&fsnotify.Remove == fsnotify.Remove || e.Op&fsnotify.Rename == fsnotify.Rename {
-		// Deleted file (rename behaves as a delete+create)
 		return t.handleEventDelete(fullPath, relPath, watcher)
 	}
 
-	if e.Op&fsnotify.Create == fsnotify.Create {
-		// Created file or directory
-		return t.handleEventCreate(fullPath, relPath, watcher)
-	}
-
-	if e.Op&fsnotify.Write == fsnotify.Write {
-		// Modified file
+	// Modified or created file
+	if e.Op&fsnotify.Write == fsnotify.Write || e.Op&fsnotify.Create == fsnotify.Create {
 		return t.handleEventUpdate(fullPath, relPath, watcher)
 	}
 
 	return nil
 }
 
-func (t *Tunnel) handleEventCreate(fullPath string, relPath string, watcher *fsnotify.Watcher) error {
-	log.Printf("[Remote %v:%v] Initiated create for %s", t.IP, t.Port, relPath)
+func (t *Tunnel) handleEventCreateDir(fullPath string, relPath string, watcher *fsnotify.Watcher) error {
+	log.Printf("[Remote %v:%v] Initiated create-directory for %s", t.IP, t.Port, relPath)
 	delete(__deleteTimes, relPath)
 
-	// Check if directory
 	fi, err := os.Stat(fullPath)
-	if err != nil && os.IsNotExist(err) {
-		log.Println(err)
-		return nil
+	if err != nil {
+		return err
 	}
 
-	reqType := REQ_TYPE_CREATE_FILE
-	if fi.IsDir() {
-		watcher.Add(fullPath)
-		reqType = REQ_TYPE_CREATE_DIR
-	}
-
-	// Is a file
-	// Create request
+	// Do the create-directory request
+	watcher.Add(fullPath)
 	req := &FileInfoReq{
-		ReqType: reqType,
+		ReqType: REQ_TYPE_CREATE_DIR,
 		RelPath: relPath,
 		ModTime: fi.ModTime().UnixNano(),
 	}
@@ -329,12 +320,7 @@ func (t *Tunnel) handleEventCreate(fullPath string, relPath string, watcher *fsn
 	}
 
 	// No need to follow-up on create requests
-	if reqType == REQ_TYPE_CREATE_DIR {
-		log.Printf("[Remote %v:%v] Now synchronizing created directory %s", t.IP, t.Port, fullPath)
-	} else {
-		log.Printf("[Remote %v:%v] Now synchronizing created file %s", t.IP, t.Port, fullPath)
-	}
-
+	log.Printf("[Remote %v:%v] Now synchronizing created directory %s", t.IP, t.Port, fullPath)
 	return nil
 }
 
