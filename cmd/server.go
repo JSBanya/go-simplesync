@@ -262,9 +262,30 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 	// This is done as soon as we can get a lock
 
 	// Open file and create if not exists
-	f, err := os.OpenFile(fqpath, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
+	var f *os.File
+	stat, err = os.Stat(fqpath)
+	if err != nil && os.IsNotExist(err) {
+		// File still does not exist, so we can safely create and lock it
+		f, err = os.Create(fqpath)
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
+		// Unhandled stat error
 		return err
+	} else {
+		// File exists
+		if !stat.ModTime().Before(modTime) {
+			// Local file is now newer, exit
+			log.Printf("[Local %s] Refuse to resolve %s, file updated locally.", conn.RemoteAddr(), relPath)
+			return nil // Silent exit
+		} else {
+			// Open the existing file
+			f, err = os.OpenFile(fqpath, os.O_RDWR, 0666)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	// Lock file
@@ -281,18 +302,6 @@ func (s *Server) handleUpdate(conn *EncryptedConnection, req *FileInfoReq) error
 		return err
 	}
 	log.Printf("[Local %s] Locked %s", conn.RemoteAddr(), relPath)
-
-	// Check mod time to see if file has been updated after transfer but before we could aquire the lock
-	stat, err = lf.Stat()
-	if err != nil {
-		return err
-	}
-
-	if !stat.ModTime().Before(modTime) {
-		// Local file is now newer, exit
-		log.Printf("[Local %s] Refuse to resolve %s, file updated locally.", conn.RemoteAddr(), relPath)
-		return nil // Silent exit
-	}
 
 	// Resolve file
 	if err = lf.Truncate(0); err != nil {
