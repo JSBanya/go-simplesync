@@ -426,5 +426,6 @@ func (t *Tunnel) handleEventDelete(fullPath string, relPath string, watcher *fsn
 		return err
 	}
 
+	log.Printf("[Remote %v:%v] Delete completed for %s", t.IP, t.Port, relPath)
 	return nil
 }

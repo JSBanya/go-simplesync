@@ -340,6 +340,7 @@ func (s *Server) handleDelete(conn *EncryptedConnection, req *FileInfoReq) error
 	}
 
 	// Delete is most recent; do delete
+	log.Printf("[Local %s] Deleting file %s", conn.RemoteAddr(), relPath)
 	__deleteTimes[relPath] = req.DelTime
 	return os.RemoveAll(fqpath)
 }
